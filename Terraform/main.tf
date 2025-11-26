@@ -86,8 +86,7 @@ resource "aws_instance" "my-infra" {
     delete_on_termination = true
   }
 
-  # User data: Create jenkins_agent directory and add Jenkins Master public key
-  # Jenkins Master uses this to SSH into the EC2 host (not container)
+  # User data: Create jenkins_agent directory and add Jenkins Master public key inside it
   user_data = base64encode(<<-EOF
     #!/bin/bash
     mkdir -p /home/ubuntu/jenkins_agent/.ssh
