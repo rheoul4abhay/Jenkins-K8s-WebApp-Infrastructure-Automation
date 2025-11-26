@@ -1,0 +1,252 @@
+---
+# tasks file for jenkins-agent
+- name: Update apt cache
+  apt:
+    update_cache: yes
+
+- name: Install basic packages
+  apt:
+    name:
+      - curl
+      - git
+      - wget
+      - unzip
+      - docker.io
+      - openjdk-17-jre-headless
+      - software-properties-common
+    state: present
+  
+- name: Install Python 3 and pip
+  apt:
+    name:
+      - python3
+      - python3-pip
+    state: present
+  become: yes
+
+- name: Upgrade pip
+  shell: python3 -m pip install --upgrade pip
+  become: yes
+
+- name: Start docker
+  systemd:
+    name: docker
+    state: started
+    enabled: yes
+
+- name: Add ubuntu to docker group
+  user:
+    name: ubuntu
+    groups: docker
+    append: yes
+
+- name: Restart Docker service
+  systemd:
+    name: docker
+    state: restarted
+    enabled: yes
+
+# Refresh Ansible SSH session so ubuntu gets docker group permissions
+- name: Refresh connection after group change
+  meta: reset_connection
+
+- name: Copy Dockerfile
+  copy:
+    src: files/Dockerfile
+    dest: /home/ubuntu
+  become: yes
+
+- name: Copy Prometheus-values.yaml
+  copy:
+    src: files/prometheus-values.yaml
+    dest: /home/ubuntu
+  become: yes
+
+- name: Copy Prometheus-rules.yaml
+  copy:
+    src: files/prometheus-rules.yaml
+    dest: /home/ubuntu
+  become: yes
+
+- name: Build jenkins-agent docker image
+  shell: >
+    docker build
+    --build-arg DOCKER_GID=$(getent group docker | cut -d: -f3)
+    -t jenkins-agent-image .
+  args:
+    chdir: /home/ubuntu
+  become: yes
+
+- name: Install Python Docker SDK (required for docker_container module)
+  pip:
+    name: docker
+    state: present
+  become: yes
+
+- name: Run SonarQube container on EC2 host
+  docker_container:
+    name: sonarqube
+    image: sonarqube:latest
+    state: started
+    restart_policy: always
+    published_ports:
+      - "9000:9000"
+  become: yes
+
+- name: Run jenkins-agent container (idempotent)
+  docker_container:
+    name: jenkins-agent
+    image: jenkins-agent-image
+    state: started
+    restart_policy: always
+    ports:
+      - "2222:22"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /home/ubuntu/jenkins_agent:/home/jenkins/
+    recreate: no
+  become: yes
+
+- name: Wait for SSH to be ready
+  wait_for:
+    host: 127.0.0.1
+    port: 2222
+    delay: 3
+    timeout: 30
+  become: no
+
+- name: Grant permissions inside the container
+  community.docker.docker_container_exec:
+    container: jenkins-agent
+    command: bash -c "chmod 700 /home/jenkins/.ssh && chmod 600 /home/jenkins/.ssh/authorized_keys && chown -R jenkins:jenkins /home/jenkins/.ssh"
+
+- name: Generate SSH keys inside container
+  community.docker.docker_container_exec:
+    container: jenkins-agent
+    user: jenkins
+    command: bash -c "yes y | ssh-keygen -q -t rsa -b 4096 -f /home/jenkins/.ssh/id_rsa -N ''"
+  ignore_errors: yes
+
+- name: Fetch container public key
+  community.docker.docker_container_exec:
+    container: jenkins-agent
+    user: jenkins
+    command: cat /home/jenkins/.ssh/id_rsa.pub
+  register: container_pubkey
+
+- name: Add container public key to host authorized_keys
+  lineinfile:
+    path: /home/ubuntu/.ssh/authorized_keys
+    create: yes
+    line: "{{ container_pubkey.stdout }}"
+    mode: '0600'
+
+- name: Install unzip in container
+  shell: docker exec jenkins-agent apt-get update && docker exec jenkins-agent apt-get install -y unzip
+  become: yes
+
+- name: Install SonarQube Scanner inside container
+  community.docker.docker_container_exec:
+    container: jenkins-agent
+    command: >
+      bash -c "apt-get update && apt-get install -y unzip &&
+      cd /tmp && curl -L -o sonar.zip https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip &&
+      unzip -o sonar.zip && mv sonar-scanner-* /opt/sonar-scanner &&
+      ln -sf /opt/sonar-scanner/bin/sonar-scanner /usr/local/bin/sonar-scanner"
+  become: yes
+  ignore_errors: yes
+
+- name: Install Helm in container
+  community.docker.docker_container_exec:
+    container: jenkins-agent
+    command: bash -c "curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash"
+  become: yes
+
+- name: Install OpenShift client (oc) in container
+  community.docker.docker_container_exec:
+    container: jenkins-agent
+    command: bash -c "cd /tmp && curl -L -o oc.tar.gz https://mirror.openshift.com/pub/openshift-v4/clients/ocp/latest/openshift-client-linux.tar.gz && tar -xzf oc.tar.gz && mv oc kubectl /usr/local/bin/ && chmod +x /usr/local/bin/oc /usr/local/bin/kubectl"
+  become: yes
+  ignore_errors: yes
+
+- name: Install kubectl on host
+  shell: |
+    KUBECTL_VERSION=$(curl -L -s https://dl.k8s.io/release/stable.txt)
+    curl -Lo /tmp/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+    install -o root -g root -m 0755 /tmp/kubectl /usr/local/bin/kubectl
+  become: yes
+  ignore_errors: yes
+
+- name: Install Helm on host
+  shell: curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+  become: yes
+
+# --- Install binaries (root required) ---
+- name: Download Minikube binary
+  get_url:
+    url: https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
+    dest: /tmp/minikube-linux-amd64
+    mode: '0755'
+  become: yes
+
+- name: Move Minikube to /usr/local/bin
+  command: install -o root -g root -m 0755 /tmp/minikube-linux-amd64 /usr/local/bin/minikube
+  become: yes
+
+# --- Cluster setup (ubuntu context) ---
+- name: Start Minikube with RBAC and resource config
+  shell: |
+    minikube start --driver=docker --cpus=2 --memory=5120 --extra-config=kubelet.read-only-port=10255
+  become_user: ubuntu
+  environment:
+    HOME: "/home/ubuntu"
+    PATH: "/usr/local/bin:/usr/bin:/bin"
+  args:
+    creates: /home/ubuntu/.minikube
+
+- name: Enable Minikube addons
+  shell: minikube addons enable {{ item }}
+  loop:
+    - default-storageclass
+    - storage-provisioner
+    - metrics-server
+  become_user: ubuntu
+
+- name: Create monitoring namespace
+  shell: kubectl create namespace monitoring
+  ignore_errors: yes
+  become_user: ubuntu
+
+- name: Create production namespace
+  shell: kubectl create namespace production
+  ignore_errors: yes
+  become_user: ubuntu
+
+- name: Add Prometheus Helm repo
+  shell: helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+  become_user: ubuntu
+
+- name: Update Helm repos
+  shell: helm repo update
+  become_user: ubuntu
+
+- name: Install Prometheus stack via Helm
+  shell: |
+    helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+      --namespace monitoring --create-namespace \
+      -f /home/ubuntu/prometheus-values.yaml
+  ignore_errors: yes
+  become_user: ubuntu
+
+- name: Apply Prometheus alert rules to monitoring namespace
+  shell: kubectl apply -f /home/ubuntu/prometheus-rules.yaml -n monitoring
+  ignore_errors: yes
+  become_user: ubuntu
+
+- name: Docker login inside jenkins-agent container
+  community.docker.docker_container_exec:
+    container: jenkins-agent
+    user: jenkins
+    command: >
+      bash -c "docker login -u {{ docker_username }} -p {{ docker_password }}"
+  no_log: true

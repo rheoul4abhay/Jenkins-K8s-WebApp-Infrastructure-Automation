@@ -1,0 +1,5 @@
+---
+- hosts: jenkins_agents
+  become: yes
+  roles:
+    - jenkins-agent

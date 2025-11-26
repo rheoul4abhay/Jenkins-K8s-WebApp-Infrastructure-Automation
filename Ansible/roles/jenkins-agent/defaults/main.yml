@@ -1,0 +1,4 @@
+---
+# defaults file for jenkins-agent
+docker_username: "abhayshrivastava"
+docker_password: "Abhay@2k2"

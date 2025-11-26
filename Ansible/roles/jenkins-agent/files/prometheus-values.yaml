@@ -1,0 +1,78 @@
+kubeStateMetrics:
+  enabled: true
+  resources:
+    requests:
+      cpu: 30m
+      memory: 50Mi
+
+nodeExporter:
+  enabled: true
+
+prometheusOperator:
+  enabled: true
+  resources:
+    requests:
+      cpu: 30m
+      memory: 50Mi
+
+kubelet:
+  enabled: true
+  serviceMonitor:
+    https: true
+    insecureSkipVerify: true
+    bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+
+prometheus:
+  prometheusSpec:
+    serviceMonitorSelectorNilUsesHelmValues: false
+    serviceMonitorSelector:
+      matchLabels:
+        release: kube-prometheus-stack
+    podMonitorSelector: {}
+    ruleSelector:
+      matchLabels:
+        myapp-alerts: "true"
+    scrapeInterval: 15s
+    evaluationInterval: 15s
+    resources:
+      requests:
+        memory: 100Mi
+        cpu: 50m
+    additionalScrapeConfigs:
+      - job_name: 'kubelet'
+        scheme: https
+        metrics_path: /metrics
+        kubernetes_sd_configs:
+          - role: node
+        tls_config:
+          insecure_skip_verify: true
+        relabel_configs:
+          - action: labelmap
+            regex: __meta_kubernetes_node_label_(.+)
+
+alertmanager:
+  enabled: true
+  alertmanagerSpec:
+    replicas: 1
+  config:
+    global:
+      resolve_timeout: 2m
+    route:
+      group_by: ['alertname']
+      group_wait: 2m
+      group_interval: 1m
+      repeat_interval: 5m
+      receiver: 'slack-notifications'
+      routes:
+        - match:
+            severity: critical
+          receiver: 'slack-notifications'
+        - match:
+            severity: warning
+          receiver: 'slack-notifications'
+    receivers:
+      - name: 'slack-notifications'
+        slack_configs:
+          - channel: '#myapp-alerts'
+            send_resolved: true
+            api_url: 'https://hooks.slack.com/services/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'

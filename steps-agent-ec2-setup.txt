@@ -1,0 +1,157 @@
+steps-for-agent-ec2-setup
+cosmotrone
+
+54.91.239.241 -> new
+52.55.215.178 -> old
+
+sqa_7e6ff913650636d29f40e3e55f702c008b9f2b88
+fdc36e8914eb1dccdda858c407cf425fFFFFNRAL-> newrelic
+
+sudo apt update
+sudo apt install docker.io -y
+sudo systemctl start docker
+sudo systemctl enable docker
+sudo usermod -aG docker $USER
+newgrp docker
+
+HELM----
+curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+helm version
+
+MINIKUBE---
+curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
+sudo install minikube-linux-amd64 /usr/local/bin/minikube
+minikube version
+minikube start --driver=docker
+
+KUBECTL---
+curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+kubectl version --client
+
+DOCKERFILE---
+
+FROM ubuntu:22.04
+
+USER root
+
+RUN apt update && apt install -y \
+    openssh-server sudo curl gnupg openjdk-17-jre-headless \
+    software-properties-common git docker.io
+
+RUN groupadd -f docker && \
+    useradd -m -s /bin/bash jenkins && \
+    usermod -aG docker jenkins && \
+    echo "jenkins ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers && \
+    mkdir /home/jenkins/.ssh
+
+# Copy public key from Jenkins master
+COPY id_rsa.pub /home/jenkins/.ssh/authorized_keys
+
+RUN chmod 700 /home/jenkins/.ssh && \
+    chmod 600 /home/jenkins/.ssh/authorized_keys && \
+    chown -R jenkins:jenkins /home/jenkins/.ssh
+
+RUN mkdir /var/run/sshd
+
+EXPOSE 22
+
+CMD ["/usr/sbin/sshd", "-D"]
+
+in ec2-2
+echo "<copied_key>" >> id_rsa.pub
+
+mkdir -p ~/jenkins_agent/.ssh
+chmod 700 ~/jenkins_agent/.ssh
+cp id_rsa.pub ~/jenkins_agent/.ssh/authorized_keys
+chmod 600 ~/jenkins_agent/.ssh/authorized_keys
+
+docker build -t jenkins-agent-image .
+
+docker run -d \
+  --name jenkins-agent \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v ~/jenkins_agent:/home/jenkins \
+  -p 2222:22 \
+  jenkins-agent-image
+
+
+from inside of the jenkins-master-container---
+ssh-keygen -f "/var/jenkins_home/.ssh/known_hosts" -R "[<old-sandbox-ec2-ip>]:2222"
+
+inside agent-ec2
+su jenkins
+chmod 600 /home/jenkins/.ssh/authorized_keys
+chmod 700 /home/jenkins/.ssh/authorized_keys
+sudo chown -R jenkins:jenkins ~/.ssh
+
+Fix--- for ssh requiring password
+inside ec2-2 agent
+chmod 700 /home/jenkins/.ssh
+chmod 600 /home/jenkins/.ssh/authorized_keys
+chown -R jenkins:jenkins /home/jenkins/.
+
+ssh -p 2222 -i /var/jenkins_home/.ssh/id_rsa jenkins@98.86.21.44 (Try)
+
+
+Optional---
+
+service ssh restart
+
+In Jenkins node configuration settings---
+Copy jenkins-master id_rsa under agent-ssh-creds along with hostname as ec2-2 instance public ip and port must be 2222 in advanced 
+
+----at end-----
+docker exec -it <agent-container> bash
+su jenkins
+ssh-keygen -t rsa -b 4096 -f /home/jenkins/.ssh/id_rsa -N ""
+ls -l /home/jenkins/.ssh/id_rsa
+sudo chown jenkins:jenkins /home/jenkins/.ssh/id_rsa
+
+cp public key into ec2-host -> .ssh/authorized_keys
+
+
+Test -> ssh -i /home/jenkins/.ssh/id_rsa ubuntu@<ec2-2-ip>
+
+docker login inside the jenkins-agent container for the first time
+
+SonarQube----
+In agent's EC2 host (outside of the agent container)
+docker run -d --name sonarqube -p 9000:9000 sonarqube
+
+Inside agent container
+Optional---
+rm -f sonar-scanner-5.0.1.3006-linux.zip
+rm -rf /opt/sonar-scanner
+rm -f /usr/bin/sonar-scanner
+
+sudo apt update && sudo apt install -y unzip
+curl -L -O https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip
+
+unzip sonar-scanner-cli-5.0.1.3006-linux.zip
+mv sonar-scanner-5.0.1.3006-linux /opt/sonar-scanner
+ln -s /opt/sonar-scanner/bin/sonar-scanner /usr/bin/sonar-scanner
+
+echo 'export SONAR_SCANNER_OPTS="-Xmx512m"' >> /etc/profile
+source /etc/profile
+sonar-scanner --version #verification
+
+OpenShift---
+curl -LO https://mirror.openshift.com/pub/openshift-v4/clients/ocp/latest/openshift-client-linux.tar.gz
+tar -xvzf openshift-client-linux.tar.gz
+mv oc kubectl /usr/local/bin/
+oc version
+
+curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+helm version
+
+New Relic----
+curl -Ls https://download.newrelic.com/infrastructure_agent/gpg/newrelic-infra.gpg | sudo apt-key add -
+echo "deb [arch=amd64] https://download.newrelic.com/infrastructure_agent/linux/apt focal main" | sudo tee /etc/apt/sources.list.d/newrelic-infra.list
+sudo apt-get update
+sudo apt-get install newrelic-infra -y
+NRIA_LICENSE_KEY=<token> sudo systemctl start newrelic-infra    
+ 
+ 
+echo "license_key: <token>" | sudo tee /etc/newrelic-infra.yml
+sudo systemctl restart newrelic-infra

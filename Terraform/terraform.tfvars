@@ -1,0 +1,6 @@
+aws_region        = "us-east-1"
+availability_zone = "us-east-1a"
+instance_type     = "m5.large"
+volume_size       = 90
+
+jenkins_master_pubkey = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQC+e+VZnsk55SDxYF9frElQunEGEd0uQjtTfEOEqEmEXF8XVM1BrS5yCVsWUlUUUiHtBLqDdNWcJ8DqSl+33XhvDQAPVOSAa2pmpUveDTMFcpzSwNlIPx1sBfxFchDd3LMxu0ZDo8ij4IN8HDRZUacHZPnBLUAz9AgbIiOKIDdKNe65UEN9HdQjqayJroFmTREwl9z33sVsvjml7eTTYZzN7BLTneUDyAdcHCa70zFaCw/dBe11pjoH0Utb+GhwR8rMJKCsJrTVTF2X5jx4fqrntx7lslkzvYcYhIvosstWYAkTUACnh0KKd8IIFUntT5KO8g0OFynDPKv9dbxZqQCa88IzCJeXiZcr/hgi5C3Lr4M7U4+sxPBkqxR0NMqdcxKyOof/j9y0Fpo64zjvkDbkYin0y9rVutOnktMCUUdKupqLTNDMN5nJwXBSu7GumWYHlovQkhZzEMcbwbotVZ+ZhyJhsZf3lf5Y5kpuyb1tY0+UbChu4CJCm32bir5UuQzvR/HvwJ5ESJpLKJ8Jpm8PU+GzibIB7tqB34LshFtmjcqHW1T8AH2Bgw51dmO66gCud4Vg5UPTf+EM2Ou3qQOE4NaWyz7X9DbLk18p6UOjdvYCn+Phbmy/Z4i6xGrlIiGvCtJB2RjiCoK0/QJcG7vnhzycS6nCtp8vS1qvehKS4w== jenkins@master"
